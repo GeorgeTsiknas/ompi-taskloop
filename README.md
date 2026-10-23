@@ -64,20 +64,31 @@ Twelve test programs, each covering one or more clauses. A test passes if and on
 
 To inspect the generated C, compile with `ompicc -k`, which keeps the intermediate file.
 
-## Results
+## Results: NAS Parallel Benchmarks
 
-Setup: Intel Xeon Silver 4314 (16 cores, 32 threads), AlmaLinux 9.4, GCC 11.5.0. OMPi and GCC were built with the same flags (`-O3 -fstrict-aliasing`). Threads pinned with `OMP_PLACES=cores`, `OMP_PROC_BIND=true`; 1, 2, 4, 8 and 16 threads; median of 5 runs; every run passed the benchmark's own verification. Benchmarks: NPB 3.0 C version, EP (class B) and MG (class C), with the main loops converted from `for` to `taskloop`.
+To evaluate the implementation on realistic workloads, two programs from the **NAS Parallel Benchmarks (NPB)** were used. NPB is NASA's reference suite of HPC benchmarks; this work uses its C/OpenMP version (NPB 3.0).
+
+- **EP** (class B): "embarrassingly parallel", independent computations with almost no communication.
+- **MG** (class C, 512 x 512 x 512 grid): a multigrid kernel.
+
+The main loops of both programs were converted from `omp for` to `taskloop`, with the number of tasks set explicitly through `grainsize` / `num_tasks` so that it does not depend on the thread count. Each program was run with OMPi and with GCC (both using `taskloop`), and with OMPi's own `for` version, to measure the extra cost of `taskloop`.
+
+Setup: Intel Xeon Silver 4314 (16 cores, 32 threads), AlmaLinux 9.4, GCC 11.5.0. OMPi and GCC were built with the same flags (`-O3 -fstrict-aliasing`). Threads pinned with `OMP_PLACES=cores`, `OMP_PROC_BIND=true`; 1, 2, 4, 8 and 16 threads; median of 5 runs; every run passed the benchmark's own verification.
 
 | | OMPi vs GCC (both `taskloop`) | OMPi `taskloop` vs OMPi `for` |
 |---|---|---|
 | EP, `grainsize(256)` (64 tasks) | within 0.9 % | within 0.5 % |
 | MG, `num_tasks(64)` | -1.0 % to +1.2 % | +0.7 % to +2.1 % |
 
-EP reaches a speedup of 14.3 on 16 threads with OMPi (14.2 with GCC), about 89 % parallel efficiency.
+EP reaches a speedup of 14.3 on 16 threads with OMPi (14.2 with GCC), about 89 % parallel efficiency. MG scales less: with 64 tasks OMPi goes from 27.4 s on 1 thread to 14.1 s on 16 threads, and with 1024 tasks to 10.5 s.
 
 ### Finding: GCC's `taskloop` stops scaling above 64 tasks per thread
 
 In the GCC 11 `libgomp` (`libgomp/taskloop.c`), `GOMP_taskloop` checks `team->task_count + num_tasks > 64 * team->nthreads`. When it holds, the tasks are not queued but run one after another by the thread that met the `taskloop`. With more tasks than that limit, GCC lost its parallelism, while OMPi did not:
+
+![EP class B with grainsize(10): GCC does not scale, OMPi does](images/ep-grainsize10.png)
+
+*NPB EP (class B), `taskloop` with `grainsize(10)` (1638 tasks): execution time against the number of threads (median of 5 runs).*
 
 | EP, `grainsize(10)` (1638 tasks), seconds | 1 | 2 | 4 | 8 | 16 |
 |---|---|---|---|---|---|
